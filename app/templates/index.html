@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeloDeMap - Validação Ambiental</title>
+    <!-- Leaflet CSS (para o mapa de entrada) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; color: #333; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { color: #2c3e50; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .form-section { flex: 1; min-width: 300px; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .map-result-section { flex: 2; min-width: 400px; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        #map-input-container { margin-bottom: 15px; }
+        #map-input { height: 250px; width: 100%; border: 1px solid #ccc; border-radius: 4px; }
+        #resultMapContainer { min-height: 500px; /* Altura mínima */ height: 80vh; /* Altura dinâmica */}
+        #resultMap { width: 100%; height: 100%; border: 1px solid #ddd; border-radius: 4px; }
+        #loading { display: none; color: #3498db; font-weight: bold; text-align: center; margin-top: 10px; }
+        #error-message { color: #e74c3c; font-weight: bold; margin-top: 10px; }
+        #info-resultado { margin-top: 15px; padding: 10px; background-color: #ecf0f1; border-radius: 4px;}
+        #info-resultado h3 { margin-top: 0; color: #2980b9; }
+        #res-aviso-prodes, #res-avisos-gerais { color: #e67e22; font-style: italic; font-size: 0.9em; }
+        .tab-content { display: none; padding-top: 10px;}
+        .tab-content.active { display: block; }
+        .tabs button { padding: 10px 15px; cursor: pointer; border: 1px solid #ddd; background-color: #f9f9f9; margin-right: 5px; border-radius: 4px 4px 0 0; }
+        .tabs button.active { background-color: #3498db; color: white; border-bottom: 1px solid #3498db; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], input[type="number"], select {
+            width: calc(100% - 22px); padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;
+        }
+        button[type="submit"] {
+            background-color: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;
+        }
+        button[type="submit"]:hover { background-color: #2980b9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 0.9em; }
+        th { background-color: #e9ecef; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SeloDeMap - Validação Ambiental</h1>
+    </div>
+
+    <div class="container">
+        <div class="form-section">
+            <div class="tabs">
+                <button class="tab-button active" onclick="showTab('coordsTab', this)">Coordenadas</button>
+                <button class="tab-button" onclick="showTab('carTab', this)">Código CAR</button>
+                <button class="tab-button" onclick="showTab('mapselectTab', this)">Selecionar no Mapa</button>
+            </div>
+
+            <form id="analysisForm">
+                <div id="coordsTab" class="tab-content active">
+                    <h3>Entrada por Coordenadas</h3>
+                    <label for="latitude">Latitude (Decimal, ex: -20.150):</label>
+                    <input type="text" id="latitude" name="latitude" value="-20.150376" required>
+                    <label for="longitude">Longitude (Decimal, ex: -55.206):</label>
+                    <input type="text" id="longitude" name="longitude" value="-55.206029" required>
+                </div>
+
+                <div id="carTab" class="tab-content">
+                    <h3>Entrada por Código CAR</h3>
+                    <label for="car_code">Código do Imóvel (CAR):</label>
+                    <input type="text" id="car_code" name="car_code" placeholder="Ex: MS-5001102-XXXX...">
+                    <label for="estado_sigla_car">UF do Imóvel (para busca CAR):</label>
+                    <select id="estado_sigla_car" name="estado_sigla_car">
+                        <option value="MS" selected>MS - Mato Grosso do Sul</option>
+                        <!-- Adicionar UFs conforme dados disponíveis no PostGIS -->
+                        <!-- <option value="SP">SP - São Paulo</option> -->
+                    </select>
+                </div>
+
+                <div id="mapselectTab" class="tab-content">
+                    <h3>Selecionar Ponto no Mapa</h3>
+                    <p>Clique no mapa abaixo para definir a coordenada de análise:</p>
+                    <div id="map-input-container"><div id="map-input"></div></div>
+                    <input type="hidden" id="map_latitude_selected" name="map_latitude_selected">
+                    <input type="hidden" id="map_longitude_selected" name="map_longitude_selected">
+                    <p>Coordenada Selecionada: <span id="selectedCoordsDisplay">Nenhuma</span></p>
+                </div>
+                
+                <input type="hidden" id="inputTypeHidden" name="inputType" value="coords"> <!-- Valor inicial -->
+                <button type="submit">Analisar Propriedade</button>
+            </form>
+            <p id="loading">Analisando, por favor aguarde...</p>
+            <div id="error-message"></div>
+
+            <div id="info-resultado" style="display:none;">
+                <h3>Informações do Resultado</h3>
+                <p><strong>Código CAR:</strong> <span id="res-car-code"></span></p>
+                <p><strong>UF:</strong> <span id="res-uf-nome"></span> (<span id="res-uf-sigla"></span>)</p>
+                <p><strong>Centro do Mapa:</strong> Lat: <span id="res-map-lat"></span>, Lon: <span id="res-map-lon"></span></p>
+                <div id="res-avisos-gerais"></div>
+                <div id="res-tabela-desmatamento"></div>
+            </div>
+        </div>
+
+        <div class="map-result-section">
+            <h2>Mapa de Análise</h2>
+            <div id="resultMapContainer">
+                <div id="resultMap"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS (para o mapa de entrada) -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+    <script>
+        let inputMap = null;
+        let inputMarker = null;
+        const defaultLat = -20.150376;
+        const defaultLon = -55.206029;
+
+        // Inicializa o mapa de resultado (será preenchido com o iframe do Folium)
+        const resultDisplayMapContainer = document.getElementById('resultMap');
+
+        function showTab(tabId, tabButtonElement) {
+            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+            document.querySelectorAll('.tabs button').forEach(tb => tb.classList.remove('active'));
+            
+            document.getElementById(tabId).classList.add('active');
+            tabButtonElement.classList.add('active');
+            
+            let currentInputType = 'coords'; // Default
+            if (tabId === 'carTab') currentInputType = 'car_code';
+            else if (tabId === 'mapselectTab') currentInputType = 'mapselect';
+            document.getElementById('inputTypeHidden').value = currentInputType;
+
+            if (tabId === 'mapselectTab' && !inputMap) {
+                inputMap = L.map('map-input').setView([defaultLat, defaultLon], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(inputMap);
+
+                inputMap.on('click', function(e) {
+                    const lat = e.latlng.lat.toFixed(6);
+                    const lon = e.latlng.lng.toFixed(6);
+                    document.getElementById('map_latitude_selected').value = lat;
+                    document.getElementById('map_longitude_selected').value = lon;
+                    document.getElementById('selectedCoordsDisplay').textContent = `Lat: ${lat}, Lon: ${lon}`;
+
+                    // Preenche também os campos da aba de coordenadas para conveniência
+                    document.getElementById('latitude').value = lat;
+                    document.getElementById('longitude').value = lon;
+
+                    if (inputMarker) inputMap.removeLayer(inputMarker);
+                    inputMarker = L.marker(e.latlng).addTo(inputMap)
+                        .bindPopup(`Coordenada selecionada:<br>Lat: ${lat}, Lon: ${lon}`).openPopup();
+                });
+            }
+        }
+
+        document.getElementById('analysisForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error-message').textContent = '';
+            document.getElementById('info-resultado').style.display = 'none';
+            resultDisplayMapContainer.innerHTML = '<p style="text-align:center; padding-top:50px;">Carregando mapa...</p>'; // Limpa mapa anterior
+
+            const formData = new FormData();
+            const inputType = document.getElementById('inputTypeHidden').value;
+            formData.append('inputType', inputType);
+
+            if (inputType === 'coords') {
+                formData.append('latitude', document.getElementById('latitude').value);
+                formData.append('longitude', document.getElementById('longitude').value);
+            } else if (inputType === 'car_code') {
+                formData.append('car_code', document.getElementById('car_code').value);
+                formData.append('estado_sigla_car', document.getElementById('estado_sigla_car').value);
+                 // Se os campos de lat/lon da aba 'coords' estiverem preenchidos (ex, por clique no mapa),
+                 // eles podem ser usados como um 'hint' para o backend caso o CAR não tenha geometria.
+                 // Mas a lógica principal do backend para 'car_code' deve buscar pelo código.
+            } else if (inputType === 'mapselect') {
+                const latSelected = document.getElementById('map_latitude_selected').value;
+                const lonSelected = document.getElementById('map_longitude_selected').value;
+                if (!latSelected || !lonSelected) {
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('error-message').textContent = 'Por favor, clique no mapa para selecionar uma coordenada.';
+                    return;
+                }
+                formData.append('latitude', latSelected);
+                formData.append('longitude', lonSelected);
+            }
+
+            try {
+                const response = await fetch("{{ url_for('analisar_propriedade') }}", { // Usa url_for do Flask
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                document.getElementById('loading').style.display = 'none';
+
+                if (!response.ok || result.error) {
+                    document.getElementById('error-message').textContent = result.error || 'Erro desconhecido ao processar a análise.';
+                    if(result.details) {
+                        document.getElementById('error-message').innerHTML += "<br>Detalhes: " + result.details.join("<br>");
+                    }
+                    return;
+                }
+                
+                // Exibir informações
+                document.getElementById('info-resultado').style.display = 'block';
+                document.getElementById('res-car-code').textContent = result.cod_imovel_encontrado || 'N/D';
+                document.getElementById('res-uf-nome').textContent = result.nome_uf_encontrado || 'N/D';
+                document.getElementById('res-uf-sigla').textContent = result.sigla_uf_encontrada || 'N/D';
+                document.getElementById('res-map-lat').textContent = result.centro_mapa ? result.centro_mapa.lat.toFixed(5) : 'N/D';
+                document.getElementById('res-map-lon').textContent = result.centro_mapa ? result.centro_mapa.lon.toFixed(5) : 'N/D';
+                
+                const avisosContainer = document.getElementById('res-avisos-gerais');
+                avisosContainer.innerHTML = ''; // Limpa avisos anteriores
+                if (result.avisos_erros && result.avisos_erros.length > 0) {
+                    avisosContainer.innerHTML = "<strong>Avisos/Erros no Processamento:</strong><br>" + result.avisos_erros.join("<br>");
+                }
+
+                document.getElementById('res-tabela-desmatamento').innerHTML = result.tabela_desmatamento_html || '<p>Nenhuma tabela de desmatamento disponível.</p>';
+                
+                // Exibir o mapa Folium (dentro de um iframe para isolar CSS/JS)
+                if (result.map_html) {
+                    resultDisplayMapContainer.innerHTML = ''; // Limpa o container
+                    const iframe = document.createElement('iframe');
+                    iframe.style.width = '100%';
+                    iframe.style.height = '100%';
+                    iframe.style.border = 'none';
+                    resultDisplayMapContainer.appendChild(iframe);
+                    iframe.contentWindow.document.open();
+                    iframe.contentWindow.document.write(result.map_html);
+                    iframe.contentWindow.document.close();
+                } else {
+                    resultDisplayMapContainer.innerHTML = '<p style="text-align:center; padding-top:50px;">Mapa não pôde ser gerado.</p>';
+                }
+
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error-message').textContent = 'Erro na comunicação com o servidor: ' + error.message;
+                console.error("Fetch error: ", error);
+            }
+        });
+        
+        // Ativa a primeira aba por padrão ao carregar a página
+        document.addEventListener('DOMContentLoaded', function() {
+            showTab('coordsTab', document.querySelector('.tabs button.active'));
+        });
+    </script>
+</body>
+</html>
