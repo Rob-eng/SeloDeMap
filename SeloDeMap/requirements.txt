@@ -1,0 +1,10 @@
+Flask
+psycopg2-binary
+geopandas
+shapely
+rasterio
+folium
+numpy
+owslib 
+requests
+branca
